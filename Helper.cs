@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -30,5 +31,7 @@ namespace Channel_Core
         {
             Console.WriteLine($"[+][{DateTime.Now.ToLongTimeString()}] {content}");
         }
+        public static long TimeStamp => (long)(DateTime.Now - new DateTime(1970, 1, 1, 0, 0, 0)).TotalMilliseconds;
+        public static string ToJson(this object json) => JsonConvert.SerializeObject(json, Formatting.None);
     }
 }

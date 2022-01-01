@@ -8,6 +8,7 @@ namespace Channel_Core
 {
     public class WebSocketCore
     {
+        public static WebSocketCore Instance { get; private set; }
         public enum OpCode
         {
             Dispatch = 0,
@@ -52,6 +53,7 @@ namespace Channel_Core
         {
             WebSocketURL = url;
             WebSocketInit();
+            Instance = this;
         }
         private void WebSocketInit()
         {
@@ -181,25 +183,31 @@ namespace Channel_Core
             switch (msg["op"].ToString())
             {
                 case "0":
-                    Opcode_Dispatch(msg["d"], msg["t"].ToString(), ((int)msg["s"]));
+                    WSocketServer.Broadcast("Dispatch", new { t = msg["t"].ToString() , s = (int)msg["s"], d = msg["d"].ToObject<object>() });
+                    Opcode_Dispatch(msg["d"], msg["t"].ToString(), (int)msg["s"]);
                     break;
                 case "1":
+                    WSocketServer.Broadcast("Heartbeat", "");
                     Opcode_Heartbeat();
                     break;
                 case "7":
                     Connected = true;
                     HeartBeatStop = false;
+                    WSocketServer.Broadcast("Reconnect", new { d = msg["d"].ToObject<object>() });
                     Opcode_Reconnect(msg["d"]);
                     break;
                 case "9":
                     Connected = false;
                     HeartBeatStop = true;
+                    WSocketServer.Broadcast("InvalidSession", new { d = msg["d"].ToObject<object>() });
                     Opcode_InvalidSession(msg["d"]);
                     break;
                 case "10":
+                    WSocketServer.Broadcast("Hello", new { d = msg["d"].ToObject<object>() });
                     Opcode_Hello(msg["d"]);
                     break;
                 case "11":
+                    WSocketServer.Broadcast("HeartbeatACK", "");
                     Opcode_HeartbeatACK();
                     break;
                 default:

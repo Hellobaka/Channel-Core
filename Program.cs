@@ -8,15 +8,18 @@ namespace Channel_Core
     {
         public static void Main(string[] args)
         {
+            Helper.OutLog("创建本地WebSocket服务器...预计端口号6235");
+            WSocketServer server = new(6235);
+            Helper.OutLog("ws://127.0.0.1:6235/main");
             var wsPoint = LoadGateWay();
             wsPoint.Wait();
             Helper.OutLog($"wss入口：{wsPoint.Result}");
             Helper.OutLog("尝试连接服务器...");
             WebSocketCore webSocket = new(wsPoint.Result);
             webSocket.Connect();
+            Helper.OutLog("进入消息循环，输入Ctrl+C中断...");
             while (true)
             {
-                Helper.OutLog("进入消息循环，输入Ctrl+C中断...");
                 Console.ReadLine();
             }
         }
