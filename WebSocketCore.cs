@@ -29,7 +29,7 @@ namespace Channel_Core
         private string SessionID { get; set; } = string.Empty;
 
         #region Event
-        public delegate void DispatchHandler(JToken msg, string msgType, string seq);
+        public delegate void DispatchHandler(JToken msg, string msgType, int seq);
         public event DispatchHandler Opcode_Dispatch;
 
         public delegate void HeartbeatHandler();
@@ -86,40 +86,75 @@ namespace Channel_Core
             Helper.OutLog("WebSocket连接成功");
             Opcode_Hello += WebSocketCore_Opcode_Hello;
             Opcode_HeartbeatACK += WebSocketCore_Opcode_HeartbeatACK;
+            Opcode_Dispatch += WebSocketCore_Opcode_Dispatch;
+            Opcode_InvalidSession += WebSocketCore_Opcode_InvalidSession;
+        }
+
+        private void WebSocketCore_Opcode_InvalidSession(JToken msg)
+        {
+            Helper.OutError("鉴权或重连参数有误");
         }
 
         private void WebSocketCore_Opcode_HeartbeatACK()
         {
             LostConnectionCount = 0;
         }
+        private void WebSocketCore_Opcode_Dispatch(JToken msg, string msgType, int seq)
+        {
+            switch (msgType)
+            {
+                case "READY":
+                    if (((bool)msg["user"]["bot"]))
+                    {
+                        SessionID = msg["session_id"].ToString();
+                        Helper.OutLog($"收到Bot信息:{msg["user"]["username"]} v{msg["version"]} - {msg["user"]["id"]}");
+                        Helper.OutLog("验证通过，开启心跳...");
+                        new Thread(() =>
+                        {
+                            Helper.OutLog($"心跳线程开始，频率 {HeartBeat_TimeOut} ms");
+                            HeartBeatStop = false;
+                            while (!HeartBeatStop)
+                            {
+                                if (LostConnectionCount >= 3)
+                                {
+                                    Helper.OutLog("似乎与服务器断开了连接，尝试发送重连请求");
+                                    ReConnect();
+                                }
+                                else
+                                {
+                                    LostConnectionCount++;
+                                    SendMsg(OpCode.Heartbeat, LastSeq == 0 ? null : LastSeq);
+                                    Thread.Sleep(HeartBeat_TimeOut);
+                                }
+                            }
+                        }).Start();
+                    }
+                    break;
+                default:
+                    LastSeq = seq;
+                    break;
+            }
+        }
+
         private void WebSocketCore_Opcode_Hello(JToken msg)
         {
             Connected = true;
             HeartBeat_TimeOut = msg["heartbeat_interval"].ToObject<int>();
-            Helper.OutLog($"收到服务器Hello响应，心跳频率：{HeartBeat_TimeOut}ms");
-            new Thread(() =>
-            {
-                Helper.OutLog($"心跳线程开始，频率 {HeartBeat_TimeOut} ms");
-                while (!HeartBeatStop)
-                {
-                    if (LostConnectionCount >= 3)
-                    {
-                        Helper.OutLog("似乎与服务器断开了连接，尝试发送重连请求");
-                        ReConnect();
-                    }
-                    else
-                    {
-                        LostConnectionCount++;
-                        SendMsg(OpCode.Heartbeat, LastSeq == 0 ? null : LastSeq);
-                        Thread.Sleep(HeartBeat_TimeOut);
-                    }
-                }
-            }).Start();
+            Helper.OutLog($"收到服务器Hello响应，心跳频率:{HeartBeat_TimeOut}ms");
+            Helper.OutLog("发送Identity请求...");
+            SendIdentityRequest();
         }
-
+        private void SendIdentityRequest()
+        {
+            SendMsg(OpCode.Identify, new
+            {
+                token = $"Bot {Config.AppID}.{Config.Token}",
+                intents = 0 | 1 << 30 | 1 << 1 | 1 << 0,
+            });
+        }
         private void Websocket_Error(object sender, SuperSocket.ClientEngine.ErrorEventArgs e)
         {
-            Helper.OutError($"WebSocket连接出错：{e.Exception.Message}");
+            Helper.OutError($"WebSocket连接出错:{e.Exception.Message}");
         }
 
         private void Websocket_Closed(object sender, EventArgs e)
@@ -132,26 +167,21 @@ namespace Channel_Core
             {
                 { "op", (int)opCode },
             };
-            if (msg != null)
-                msgToSend.Add("d", JObject.Parse(JsonConvert.SerializeObject(msg)));
-            else
+            if (msg is null)
                 msgToSend.Add("d", null);
-            Helper.OutLog($"推送消息：{msgToSend.ToString(Formatting.None)}");
+            else
+                msgToSend.Add("d", JToken.FromObject(msg));
+            Helper.OutLog($"推送消息:{msgToSend.ToString(Formatting.None)}");
             Websocket.Send(msgToSend.ToString(Formatting.None));
         }
         private void Websocket_MessageReceived(object sender, MessageReceivedEventArgs e)
         {
-            Helper.OutLog($"来自服务器的消息：{e.Message}");
+            Helper.OutLog($"来自服务器的消息:{e.Message}");
             JObject msg = JObject.Parse(e.Message);
             switch (msg["op"].ToString())
             {
                 case "0":
-                    if (msg["t"].ToString() == "READY" && ((bool)msg["d"]["user"]["bot"]))
-                    {
-                        SessionID = msg["d"]["session_id"].ToString();
-                        Helper.OutLog($"收到Bot信息：{msg["d"]["user"]["username"]} v{msg["d"]["version"]} - {msg["d"]["user"]["id"]}");
-                    }
-                    Opcode_Dispatch(msg["d"], msg["t"].ToString(), msg["s"].ToString());
+                    Opcode_Dispatch(msg["d"], msg["t"].ToString(), ((int)msg["s"]));
                     break;
                 case "1":
                     Opcode_Heartbeat();
@@ -162,6 +192,9 @@ namespace Channel_Core
                     Opcode_Reconnect(msg["d"]);
                     break;
                 case "9":
+                    Connected = false;
+                    HeartBeatStop = true;
+                    Opcode_InvalidSession(msg["d"]);
                     break;
                 case "10":
                     Opcode_Hello(msg["d"]);

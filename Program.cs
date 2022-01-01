@@ -14,8 +14,11 @@ namespace Channel_Core
             Helper.OutLog("尝试连接服务器...");
             WebSocketCore webSocket = new(wsPoint.Result);
             webSocket.Connect();
-            Console.WriteLine("end");
-            Console.ReadLine();
+            while (true)
+            {
+                Helper.OutLog("进入消息循环，输入Ctrl+C中断...");
+                Console.ReadLine();
+            }
         }
         public static async Task<string> LoadGateWay()
         {
