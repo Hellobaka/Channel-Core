@@ -27,6 +27,7 @@ namespace Channel_Core
         private int LostConnectionCount { get; set; } = 0;
         private bool HeartBeatStop { get; set; } = false;
         private bool Connected { get; set; } = false;
+        private bool Resuming { get; set; } = false;
         private string SessionID { get; set; } = string.Empty;
 
         #region Event
@@ -36,7 +37,7 @@ namespace Channel_Core
         public delegate void HeartbeatHandler();
         public event HeartbeatHandler Opcode_Heartbeat;
 
-        public delegate void ReconnectHandler(JToken msg);
+        public delegate void ReconnectHandler();
         public event ReconnectHandler Opcode_Reconnect;
 
         public delegate void InvalidSessionHandler(JToken msg);
@@ -71,18 +72,15 @@ namespace Channel_Core
         {
             Connected = false;
             HeartBeatStop = true;
-            int reTryCount = 0;
-            while (!Connected)
-            {
-                reTryCount++;
-                Websocket.Dispose();
-                WebSocketInit();
-                Connect();
-                Helper.OutLog($"第 {reTryCount} 次尝试重连...");
-                SendMsg(OpCode.Resume, new { token = Config.Token, session_id = SessionID, seq = LastSeq });
-                Thread.Sleep(1000 * 3);
-            }
+            Helper.OutLog($"尝试重连...");
+            SendResumeRequest();
         }
+        private void SendResumeRequest()
+        {
+            Resuming = true;
+            SendMsg(OpCode.Resume, new { token = Config.Token, session_id = SessionID, seq = LastSeq });            
+        }
+
         private void Websocket_Opened(object sender, EventArgs e)
         {
             Helper.OutLog("WebSocket连接成功");
@@ -90,6 +88,12 @@ namespace Channel_Core
             Opcode_HeartbeatACK += WebSocketCore_Opcode_HeartbeatACK;
             Opcode_Dispatch += WebSocketCore_Opcode_Dispatch;
             Opcode_InvalidSession += WebSocketCore_Opcode_InvalidSession;
+            Opcode_Reconnect += WebSocketCore_Opcode_Reconnect;
+        }
+
+        private void WebSocketCore_Opcode_Reconnect()
+        {
+            ReConnect();
         }
 
         private void WebSocketCore_Opcode_InvalidSession(JToken msg)
@@ -103,6 +107,7 @@ namespace Channel_Core
         }
         private void WebSocketCore_Opcode_Dispatch(JToken msg, string msgType, int seq)
         {
+            Connected = true;
             switch (msgType)
             {
                 case "READY":
@@ -132,6 +137,11 @@ namespace Channel_Core
                         }).Start();
                     }
                     break;
+                case "RESUMED":
+                    HeartBeatStop = false;
+                    Resuming = false;
+                    Helper.OutLog("重连完成");
+                    break;
                 default:
                     LastSeq = seq;
                     break;
@@ -143,8 +153,11 @@ namespace Channel_Core
             Connected = true;
             HeartBeat_TimeOut = msg["heartbeat_interval"].ToObject<int>();
             Helper.OutLog($"收到服务器Hello响应，心跳频率:{HeartBeat_TimeOut}ms");
-            Helper.OutLog("发送Identity请求...");
-            SendIdentityRequest();
+            if (!Resuming)
+            {
+                Helper.OutLog("发送Identity请求...");
+                SendIdentityRequest();
+            }
         }
         private void SendIdentityRequest()
         {
@@ -161,7 +174,13 @@ namespace Channel_Core
 
         private void Websocket_Closed(object sender, EventArgs e)
         {
-            Helper.OutError("与服务器断开连接");
+            Helper.OutError("与服务器断开连接，阻止重新连接请按Ctrl+C");
+            Helper.OutLog("尝试重新连接...");
+            Websocket.Dispose();
+            WebSocketInit();
+            Connect();
+            Helper.OutLog("发送Resume请求...");
+            SendResumeRequest();
         }
         public void SendMsg(OpCode opCode, object msg)
         {
@@ -193,8 +212,8 @@ namespace Channel_Core
                 case "7":
                     Connected = true;
                     HeartBeatStop = false;
-                    WSocketServer.Broadcast("Reconnect", new { d = msg["d"].ToObject<object>() });
-                    Opcode_Reconnect(msg["d"]);
+                    WSocketServer.Broadcast("Reconnect", "");
+                    Opcode_Reconnect();
                     break;
                 case "9":
                     Connected = false;
