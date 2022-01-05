@@ -40,10 +40,12 @@ namespace Channel_Core
             protected override void OnOpen()
             {
                 Clients.Add(this);
+                Helper.OutLog("Plugin Connected.");
             }
             protected override void OnClose(CloseEventArgs e)
             {
                 Clients.Remove(this);
+                Helper.OutLog("Plugin Disconnected.");
             }
             public void Emit(string type, object msg)
             {

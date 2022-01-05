@@ -29,6 +29,7 @@ namespace Channel_Core
         private bool Connected { get; set; } = false;
         private bool Resuming { get; set; } = false;
         private string SessionID { get; set; } = string.Empty;
+        private Thread HeartBeat_Thread { get; set; } = null;
 
         #region Event
         public delegate void DispatchHandler(JToken msg, string msgType, int seq);
@@ -84,6 +85,7 @@ namespace Channel_Core
         private void Websocket_Opened(object sender, EventArgs e)
         {
             Helper.OutLog("WebSocket连接成功");
+            if (Opcode_Hello != null) return;
             Opcode_Hello += WebSocketCore_Opcode_Hello;
             Opcode_HeartbeatACK += WebSocketCore_Opcode_HeartbeatACK;
             Opcode_Dispatch += WebSocketCore_Opcode_Dispatch;
@@ -116,11 +118,12 @@ namespace Channel_Core
                         SessionID = msg["session_id"].ToString();
                         Helper.OutLog($"收到Bot信息:{msg["user"]["username"]} v{msg["version"]} - {msg["user"]["id"]}");
                         Helper.OutLog("验证通过，开启心跳...");
-                        new Thread(() =>
+                        if (HeartBeat_Thread != null) break;
+                        HeartBeatStop = false;
+                        HeartBeat_Thread = new Thread(() =>
                         {
                             Helper.OutLog($"心跳线程开始，频率 {HeartBeat_TimeOut} ms");
-                            HeartBeatStop = false;
-                            while (!HeartBeatStop)
+                            while (true)
                             {
                                 if (LostConnectionCount >= 3)
                                 {
@@ -131,10 +134,22 @@ namespace Channel_Core
                                 {
                                     LostConnectionCount++;
                                     SendMsg(OpCode.Heartbeat, LastSeq == 0 ? null : LastSeq);
-                                    Thread.Sleep(HeartBeat_TimeOut);
+                                    int count = 0;
+                                    while(count <= HeartBeat_TimeOut / 100)
+                                    {
+                                        if (HeartBeatStop) break;
+                                        count++;
+                                        Thread.Sleep(100);
+                                    }
+                                    if (HeartBeatStop)
+                                    {
+                                        Console.WriteLine("HeartBeat stop.");
+                                        break;
+                                    }
                                 }
                             }
-                        }).Start();
+                        });
+                        HeartBeat_Thread.Start();
                     }
                     break;
                 case "RESUMED":
@@ -150,14 +165,18 @@ namespace Channel_Core
 
         private void WebSocketCore_Opcode_Hello(JToken msg)
         {
+            if (Connected) return;
             Connected = true;
             HeartBeat_TimeOut = msg["heartbeat_interval"].ToObject<int>();
             Helper.OutLog($"收到服务器Hello响应，心跳频率:{HeartBeat_TimeOut}ms");
-            if (!Resuming)
-            {
-                Helper.OutLog("发送Identity请求...");
-                SendIdentityRequest();
-            }
+            Helper.OutLog("发送Identity请求...");
+            SendIdentityRequest();
+
+            //if (!Resuming)
+            //{
+            //    Helper.OutLog("发送Identity请求...");
+            //    SendIdentityRequest();
+            //}
         }
         private void SendIdentityRequest()
         {
@@ -174,13 +193,17 @@ namespace Channel_Core
 
         private void Websocket_Closed(object sender, EventArgs e)
         {
+            Connected = false;
+            HeartBeatStop = true;
+            HeartBeat_Thread = null;
             Helper.OutError("与服务器断开连接，阻止重新连接请按Ctrl+C");
+            Thread.Sleep(1000 * 3);
             Helper.OutLog("尝试重新连接...");
             Websocket.Dispose();
             WebSocketInit();
             Connect();
-            Helper.OutLog("发送Resume请求...");
-            SendResumeRequest();
+            //Helper.OutLog("发送Resume请求...");
+            //SendResumeRequest();
         }
         public void SendMsg(OpCode opCode, object msg)
         {
@@ -203,31 +226,31 @@ namespace Channel_Core
             {
                 case "0":
                     WSocketServer.Broadcast("Dispatch", new { t = msg["t"].ToString() , s = (int)msg["s"], d = msg["d"].ToObject<object>() });
-                    Opcode_Dispatch(msg["d"], msg["t"].ToString(), (int)msg["s"]);
+                    Opcode_Dispatch?.Invoke(msg["d"], msg["t"].ToString(), (int)msg["s"]);
                     break;
                 case "1":
                     WSocketServer.Broadcast("Heartbeat", "");
-                    Opcode_Heartbeat();
+                    Opcode_Heartbeat?.Invoke();
                     break;
                 case "7":
                     Connected = true;
                     HeartBeatStop = false;
                     WSocketServer.Broadcast("Reconnect", "");
-                    Opcode_Reconnect();
+                    Opcode_Reconnect?.Invoke();
                     break;
                 case "9":
                     Connected = false;
                     HeartBeatStop = true;
                     WSocketServer.Broadcast("InvalidSession", new { d = msg["d"].ToObject<object>() });
-                    Opcode_InvalidSession(msg["d"]);
+                    Opcode_InvalidSession?.Invoke(msg["d"]);
                     break;
                 case "10":
                     WSocketServer.Broadcast("Hello", new { d = msg["d"].ToObject<object>() });
-                    Opcode_Hello(msg["d"]);
+                    Opcode_Hello?.Invoke(msg["d"]);
                     break;
                 case "11":
                     WSocketServer.Broadcast("HeartbeatACK", "");
-                    Opcode_HeartbeatACK();
+                    Opcode_HeartbeatACK?.Invoke();
                     break;
                 default:
                     break;
