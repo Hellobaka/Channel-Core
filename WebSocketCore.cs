@@ -225,7 +225,7 @@ namespace Channel_Core
             switch (msg["op"].ToString())
             {
                 case "0":
-                    WSocketServer.Broadcast("Dispatch", new { t = msg["t"].ToString() , s = (int)msg["s"], d = msg["d"].ToObject<object>() });
+                    WSocketServer.Broadcast("Dispatch", new { t = msg["t"].ToString() , s = (int)msg["s"], d = msg["d"].ToObject<object>() }, true);
                     Opcode_Dispatch?.Invoke(msg["d"], msg["t"].ToString(), (int)msg["s"]);
                     break;
                 case "1":

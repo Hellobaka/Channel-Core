@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
+using System.Threading.Tasks;
 using WebSocketSharp;
 using WebSocketSharp.Server;
 
@@ -13,7 +14,14 @@ namespace Channel_Core
         {
             PlainMsg,
             EmbedMsg,
-            ArkMsg
+            ArkMsg,
+            PluginInfo,
+            CallResult,
+        }
+        public enum CallResult
+        {
+            Pass,
+            Block
         }
 
         WebSocketServer Instance;
@@ -27,9 +35,77 @@ namespace Channel_Core
             Clients = new List<MsgHandler>();
             Instance.Start();
         }
-        public static void Broadcast(string type, object msg)
+        private static Dictionary<int, MessageStateMachine> OrderedMessage = new();
+        private static int msgSeq = 0;
+        public static void Broadcast(string type, object msg, bool orderful = false)
         {
-            Clients.ForEach(x => x.Emit(type, msg));
+            msgSeq++;
+            if (orderful)
+            {
+                MessageStateMachine stateMachine = new(type, msg, Clients);
+                Helper.OutLog("加入队列");
+                OrderedMessage.Add(msgSeq, stateMachine);
+                stateMachine.Next();
+            }
+            else
+            {
+                Clients.ForEach(client => client.Emit(type, msg));
+            }
+        }
+        private static void RemoveStateMachine(int seq)
+        {
+            Helper.OutLog($"清除消息队列，序号: {seq}");
+             OrderedMessage.Remove(seq);
+        }
+        public class MessageStateMachine
+        {
+            public int index = 0;
+
+            readonly List<MsgHandler> clients;
+            readonly string type;
+            readonly object msg;
+            public MessageStateMachine(string type, object msg, List<MsgHandler> clients)
+            {
+                this.clients = clients;
+                this.type = type;
+                this.msg = msg;
+            }
+            public void Next()
+            {
+                if(index < clients.Count)
+                {
+                    clients[index].Emit(type, msg);
+                    index++;
+                }
+                else
+                {
+                    Helper.OutLog("溢出");
+                    RemoveStateMachine(index);
+                }
+            }
+            public void HandleResult(CallResult result)
+            {
+                switch (result)
+                {
+                    case CallResult.Pass:
+                        Helper.OutLog($"投递消息，序号: {index}");
+                        if(index == clients.Count)
+                        {
+                            RemoveStateMachine(index);
+                        }
+                        else
+                        {
+                            Next();
+                        }
+                        break;
+                    case CallResult.Block:
+                        Helper.OutLog($"阻止消息投递，序号: {index}");
+                        RemoveStateMachine(index);
+                        return;
+                    default:
+                        break;
+                }
+            }
         }
         public class MsgHandler : WebSocketBehavior
         {
@@ -49,11 +125,12 @@ namespace Channel_Core
             }
             public void Emit(string type, object msg)
             {
-                Send((new { type, data = new { msg, timestamp = Helper.TimeStamp } }).ToJson());
+                Send((new { type, seq = msgSeq, data = new { msg, timestamp = Helper.TimeStamp } }).ToJson());
             }
             public async static void HandleMessage(MsgHandler socket, string Data)
             {
                 JObject json = JObject.Parse(Data);
+                int msgSeq = ((int)json["seq"]);
                 using var http = Helper.GetTemplateHttpClient();
                 switch ((MessageType)(int)json["type"])
                 {
@@ -66,6 +143,9 @@ namespace Channel_Core
                     case MessageType.EmbedMsg:
                         break;
                     case MessageType.ArkMsg:
+                        break;
+                    case MessageType.CallResult:
+                        OrderedMessage[msgSeq].HandleResult((CallResult)((int)json["data"]["result"]));
                         break;
                     default:
                         break;
