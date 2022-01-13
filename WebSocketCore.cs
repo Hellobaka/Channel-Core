@@ -133,7 +133,7 @@ namespace Channel_Core
                                 else
                                 {
                                     LostConnectionCount++;
-                                    SendMsg(OpCode.Heartbeat, LastSeq == 0 ? null : LastSeq);
+                                    SendMsg(OpCode.Heartbeat, LastSeq == 0 ? -1 : LastSeq);
                                     int count = 0;
                                     while(count <= HeartBeat_TimeOut / 100)
                                     {
@@ -207,11 +207,11 @@ namespace Channel_Core
         }
         public void SendMsg(OpCode opCode, object msg)
         {
-            JObject msgToSend = new()
+            JObject msgToSend = new JObject()
             {
                 { "op", (int)opCode },
             };
-            if (msg is null)
+            if (msg is int && Convert.ToInt32(msg) == -1)
                 msgToSend.Add("d", null);
             else
                 msgToSend.Add("d", JToken.FromObject(msg));
