@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -121,7 +122,7 @@ namespace Channel_Core
             {
                 if (Clients.Count > 1) this.clientID = Clients.Last().clientID + 1;
                 Clients.Add(this);
-                Emit("Instance", new { type = MessageType.PluginInfo, id = clientID });
+                Emit("Instance", new { type = MessageType.PluginInfo, id = clientID, pid = Environment.ProcessId });
                 Helper.OutLog("Plugin Connected.");
             }
             protected override void OnClose(CloseEventArgs e)
@@ -141,32 +142,30 @@ namespace Channel_Core
             {
                 JObject json = JObject.Parse(Data);
                 int msgSeq = ((int)json["seq"]);
-                using (var http = Helper.GetTemplateHttpClient())
+                using var http = Helper.GetTemplateHttpClient();
+                switch ((MessageType)(int)json["type"])
                 {
-                    switch ((MessageType)(int)json["type"])
-                    {
-                        case MessageType.PlainMsg:
-                            string channelID = json["data"]["channelID"].ToString();
-                            string url = $"channels/{channelID}/messages";
-                            var result = await http.PostAsync(url, new StringContent(json["data"]["content"].ToString(), Encoding.UTF8, "application/json"));
-                            Helper.OutLog($"code: {result.StatusCode} content: {await result.Content.ReadAsStringAsync()}");
-                            break;
-                        case MessageType.EmbedMsg:
-                            break;
-                        case MessageType.ArkMsg:
-                            break;
-                        case MessageType.CallResult:
-                            OrderedMessage[msgSeq].HandleResult((CallResult)((int)json["data"]["result"]));
-                            break;
-                        case MessageType.PluginInfo:
-                            int clientID = (int)json["data"]["id"];
-                            var client = Clients.First(x => x.clientID == clientID);
-                            client.PluginInfo = JsonConvert.DeserializeObject<PluginInfo>(json["data"]["content"].ToString());
-                            Helper.OutLog($"插件: {client.PluginInfo.Name} - v{client.PluginInfo.Version} 连接成功");
-                            break;
-                        default:
-                            break;
-                    }
+                    case MessageType.PlainMsg:
+                        string channelID = json["data"]["channelID"].ToString();
+                        string url = $"channels/{channelID}/messages";
+                        var result = await http.PostAsync(url, new StringContent(json["data"]["content"].ToString(), Encoding.UTF8, "application/json"));
+                        Helper.OutLog($"code: {result.StatusCode} content: {await result.Content.ReadAsStringAsync()}");
+                        break;
+                    case MessageType.EmbedMsg:
+                        break;
+                    case MessageType.ArkMsg:
+                        break;
+                    case MessageType.CallResult:
+                        OrderedMessage[msgSeq].HandleResult((CallResult)((int)json["data"]["result"]));
+                        break;
+                    case MessageType.PluginInfo:
+                        int clientID = (int)json["data"]["id"];
+                        var client = Clients.First(x => x.clientID == clientID);
+                        client.PluginInfo = JsonConvert.DeserializeObject<PluginInfo>(json["data"]["content"].ToString());
+                        Helper.OutLog($"插件: {client.PluginInfo.Name} - v{client.PluginInfo.Version} 连接成功");
+                        break;
+                    default:
+                        break;
                 }
             }
         }
